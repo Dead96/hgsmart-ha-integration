@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HG Smart",
+        "description": "Enter your HG Smart account credentials (the same used in the app).",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach the HG Smart server.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "Online" }
+    },
+    "sensor": {
+      "remaining_food": { "name": "Remaining food" },
+      "desiccant_expire": { "name": "Desiccant expiry" },
+      "refill_date": { "name": "Last refill" },
+      "desiccant_date": { "name": "Last desiccant change" },
+      "firmware_version": { "name": "Firmware version" },
+      "last_event": { "name": "Last event" }
+    },
+    "select": {
+      "portions": { "name": "Portions" }
+    },
+    "button": {
+      "feed": { "name": "Manual feed" }
+    }
+  }
+}

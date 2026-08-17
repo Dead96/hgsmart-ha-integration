@@ -1,0 +1,11 @@
+{
+  "domain": "hgsmart",
+  "name": "HGSmart Home Assistant Integration",
+  "codeowners": ["@Dead96"],
+  "config_flow": true,
+  "documentation": "https://github.com/Dead96/hgsmart-ha-integration",
+  "issue_tracker": "https://github.com/Dead96/hgsmart-ha-integration/issues",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}

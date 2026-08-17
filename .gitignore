@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Secrets — non committare mai credenziali reali
+secrets.yaml
+*.env
+.env
+
+# Home Assistant test/dev config (se usi una HA locale per provare l'integrazione)
+config/*
+!config/custom_components

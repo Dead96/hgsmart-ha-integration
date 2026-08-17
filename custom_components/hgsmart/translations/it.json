@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HG Smart",
+        "description": "Inserisci le credenziali del tuo account HG Smart (le stesse dell'app).",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Email o password non corretti.",
+      "cannot_connect": "Impossibile contattare il server HG Smart.",
+      "unknown": "Errore imprevisto."
+    },
+    "abort": {
+      "already_configured": "Questo account è già configurato."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "online": { "name": "Online" }
+    },
+    "sensor": {
+      "remaining_food": { "name": "Cibo rimanente" },
+      "desiccant_expire": { "name": "Scadenza essiccante" },
+      "refill_date": { "name": "Ultimo rifornimento" },
+      "desiccant_date": { "name": "Ultima sostituzione essiccante" },
+      "firmware_version": { "name": "Versione firmware" },
+      "last_event": { "name": "Ultimo evento" }
+    },
+    "select": {
+      "portions": { "name": "Porzioni" }
+    },
+    "button": {
+      "feed": { "name": "Erogazione manuale" }
+    }
+  }
+}
