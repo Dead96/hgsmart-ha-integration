@@ -1,67 +1,126 @@
-"""Data coordinator: logs in, lists devices, polls status, detects new devices."""
+"""Coordinators: account-wide device discovery, plus one status poller per device.
+
+Each device gets its own `HGSmartDeviceCoordinator` with an independent,
+user-configurable update interval (default 5 minutes, see the "Update
+interval" `number` entity in number.py). Discovering *new* devices on the
+account is handled separately by `HGSmartDiscoveryCoordinator` on a fixed
+cadence, since it isn't tied to any single device yet.
+"""
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import HGSmartApiClient, HGSmartApiError
-from .const import DEFAULT_PORTIONS, DOMAIN, SCAN_INTERVAL, SIGNAL_NEW_DEVICE
+from .const import (
+    DEFAULT_PORTIONS,
+    DEFAULT_REFILL_PERCENT,
+    DISCOVERY_INTERVAL,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class HGSmartCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
-    """Fetches device list + status for all devices on the account."""
+class HGSmartDiscoveryCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
+    """Polls the account's device list on a fixed cadence to find new devices."""
 
-    def __init__(self, hass: HomeAssistant, entry_id: str, client: HGSmartApiClient) -> None:
+    def __init__(self, hass: HomeAssistant, client: HGSmartApiClient) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
-            update_interval=SCAN_INTERVAL,
+            name=f"{DOMAIN}_discovery",
+            update_interval=DISCOVERY_INTERVAL,
         )
         self.client = client
-        self.signal_new_device = SIGNAL_NEW_DEVICE.format(entry_id=entry_id)
-        self._known_device_ids: set[str] = set()
-        self._portions: dict[str, int] = {}
 
-    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
+    async def _async_update_data(self) -> list[dict[str, Any]]:
         try:
             token = await self.client.async_login()
-            devices = await self.client.async_get_devices(token)
-
-            data: dict[str, dict[str, Any]] = {}
-            for device in devices:
-                device_id = device["deviceId"]
-                try:
-                    summary = await self.client.async_get_feeder_summary(token, device_id)
-                except HGSmartApiError as err:
-                    _LOGGER.debug("Feeder summary failed for %s: %s", device_id, err)
-                    summary = {}
-                try:
-                    today = await self.client.async_get_today_events(token, device_id)
-                except HGSmartApiError as err:
-                    _LOGGER.debug("Today events failed for %s: %s", device_id, err)
-                    today = []
-                data[device_id] = {"info": device, "summary": summary, "today": today}
+            return await self.client.async_get_devices(token)
         except HGSmartApiError as err:
             raise UpdateFailed(str(err)) from err
 
-        new_device_ids = set(data) - self._known_device_ids
-        if new_device_ids and self._known_device_ids:
-            for device_id in new_device_ids:
-                _LOGGER.info("HG Smart: new device detected %s", device_id)
-                async_dispatcher_send(self.hass, self.signal_new_device, device_id)
-        self._known_device_ids = set(data)
 
-        return data
+class HGSmartDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Fetches info/status for a single device, at its own configurable interval."""
 
-    def get_portions(self, device_id: str) -> int:
-        return self._portions.get(device_id, DEFAULT_PORTIONS)
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        client: HGSmartApiClient,
+        device_id: str,
+        update_interval: timedelta,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_{device_id}",
+            update_interval=update_interval,
+        )
+        self.client = client
+        self.device_id = device_id
+        self._portions = DEFAULT_PORTIONS
+        self._refill_percent = DEFAULT_REFILL_PERCENT
 
-    def set_portions(self, device_id: str, portions: int) -> None:
-        self._portions[device_id] = portions
+    async def _async_update_data(self) -> dict[str, Any]:
+        try:
+            token = await self.client.async_login()
+            info = await self.client.async_get_device_info(token, self.device_id)
+        except HGSmartApiError as err:
+            raise UpdateFailed(str(err)) from err
+
+        try:
+            summary = await self.client.async_get_feeder_summary(token, self.device_id)
+        except HGSmartApiError as err:
+            _LOGGER.debug("Feeder summary failed for %s: %s", self.device_id, err)
+            summary = {}
+        try:
+            today = await self.client.async_get_today_events(token, self.device_id)
+        except HGSmartApiError as err:
+            _LOGGER.debug("Today events failed for %s: %s", self.device_id, err)
+            today = []
+        try:
+            attributes = await self.client.async_get_attributes(token, self.device_id)
+        except HGSmartApiError as err:
+            _LOGGER.debug("Attributes fetch failed for %s: %s", self.device_id, err)
+            attributes = {}
+
+        return {"info": info, "summary": summary, "today": today, "attributes": attributes}
+
+    async def async_set_update_interval(self, interval: timedelta) -> None:
+        """Change the polling interval and apply it immediately."""
+        self.update_interval = interval
+        await self.async_request_refresh()
+
+    def get_portions(self) -> int:
+        return self._portions
+
+    def set_portions(self, portions: int) -> None:
+        self._portions = portions
+
+    def get_refill_percent(self) -> int:
+        return self._refill_percent
+
+    def set_refill_percent(self, percent: int) -> None:
+        self._refill_percent = percent
+
+    def get_meal_slot(self, slot: int) -> dict[str, Any] | None:
+        """Decoded {enabled, hour, minute, portions, slot} for `planN`, or None if unknown."""
+        value = (self.data or {}).get("attributes", {}).get(f"plan{slot}")
+        if not value:
+            return None
+        return self.client.parse_plan_value(value)
+
+    async def async_set_meal_slot(
+        self, slot: int, *, enabled: bool, hour: int, minute: int, portions: int
+    ) -> None:
+        token = await self.client.async_login()
+        await self.client.async_set_plan_slot(
+            token, self.device_id, slot, enabled, hour, minute, portions
+        )
+        await self.async_request_refresh()

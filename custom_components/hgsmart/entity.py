@@ -12,21 +12,21 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import HGSmartCoordinator
+from .coordinator import HGSmartDeviceCoordinator
 
 
-class HGSmartDeviceEntity(CoordinatorEntity[HGSmartCoordinator]):
-    """Base entity tied to a single HG Smart device."""
+class HGSmartDeviceEntity(CoordinatorEntity[HGSmartDeviceCoordinator]):
+    """Base entity tied to a single HG Smart device and its own coordinator."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
 
     @property
     def device_data(self) -> dict[str, Any]:
-        return self.coordinator.data.get(self._device_id, {})
+        return self.coordinator.data or {}
 
     @property
     def device_raw_info(self) -> dict[str, Any]:
@@ -34,7 +34,7 @@ class HGSmartDeviceEntity(CoordinatorEntity[HGSmartCoordinator]):
 
     @property
     def available(self) -> bool:
-        return super().available and self._device_id in self.coordinator.data
+        return super().available and self.coordinator.data is not None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -51,22 +51,25 @@ class HGSmartDeviceEntity(CoordinatorEntity[HGSmartCoordinator]):
 def async_setup_device_entities(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    coordinator: HGSmartCoordinator,
     async_add_entities: AddEntitiesCallback,
-    factory: Callable[[HGSmartCoordinator, str], list[Entity]],
+    factory: Callable[[HGSmartDeviceCoordinator, str], list[Entity]],
 ) -> None:
     """Add entities for existing devices now, and for new devices as they appear."""
+    store = hass.data[DOMAIN][entry.entry_id]
     added: set[str] = set()
 
     def _add(device_id: str) -> None:
         if device_id in added:
             return
+        coordinator = store["device_coordinators"].get(device_id)
+        if coordinator is None:
+            return
         added.add(device_id)
         async_add_entities(factory(coordinator, device_id))
 
-    for device_id in coordinator.data:
+    for device_id in list(store["device_coordinators"]):
         _add(device_id)
 
     entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_new_device, _add)
+        async_dispatcher_connect(hass, store["signal_new_device"], _add)
     )

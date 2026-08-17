@@ -34,8 +34,22 @@
     "select": {
       "portions": { "name": "Portions" }
     },
+    "number": {
+      "refill_percent": { "name": "Refill percentage" },
+      "update_interval": { "name": "Update interval" },
+      "meal_portions": { "name": "Meal {n} portions" }
+    },
     "button": {
-      "feed": { "name": "Manual feed" }
+      "feed": { "name": "Manual feed" },
+      "reset_desiccant": { "name": "Reset desiccant" },
+      "refill": { "name": "Refill" }
+    },
+    "switch": {
+      "child_lock": { "name": "Child lock" },
+      "meal_enabled": { "name": "Meal {n} enabled" }
+    },
+    "time": {
+      "meal_time": { "name": "Meal {n} time" }
     }
   }
 }

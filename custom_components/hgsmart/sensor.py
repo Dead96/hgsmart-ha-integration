@@ -10,17 +10,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
-from .coordinator import HGSmartCoordinator
+from .coordinator import HGSmartDeviceCoordinator
 from .entity import HGSmartDeviceEntity, async_setup_device_entities
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    coordinator: HGSmartCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    def factory(coordinator: HGSmartCoordinator, device_id: str) -> list:
+    def factory(coordinator: HGSmartDeviceCoordinator, device_id: str) -> list:
         return [
             HGSmartRemainingFoodSensor(coordinator, device_id),
             HGSmartDesiccantExpireSensor(coordinator, device_id),
@@ -30,14 +27,14 @@ async def async_setup_entry(
             HGSmartLastFeedingSensor(coordinator, device_id),
         ]
 
-    async_setup_device_entities(hass, entry, coordinator, async_add_entities, factory)
+    async_setup_device_entities(hass, entry, async_add_entities, factory)
 
 
 class HGSmartRemainingFoodSensor(HGSmartDeviceEntity, SensorEntity):
     _attr_translation_key = "remaining_food"
     _attr_icon = "mdi:food-drumstick-outline"
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_remaining"
 
@@ -52,7 +49,7 @@ class HGSmartDesiccantExpireSensor(HGSmartDeviceEntity, SensorEntity):
     _attr_native_unit_of_measurement = UnitOfTime.DAYS
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_desiccant_expire"
 
@@ -66,7 +63,7 @@ class HGSmartRefillDateSensor(HGSmartDeviceEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_refill_date"
 
@@ -80,7 +77,7 @@ class HGSmartDesiccantDateSensor(HGSmartDeviceEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_desiccant_date"
 
@@ -93,7 +90,7 @@ class HGSmartFirmwareSensor(HGSmartDeviceEntity, SensorEntity):
     _attr_translation_key = "firmware_version"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_fw_version"
 
@@ -106,7 +103,7 @@ class HGSmartLastFeedingSensor(HGSmartDeviceEntity, SensorEntity):
     _attr_translation_key = "last_event"
     _attr_icon = "mdi:history"
 
-    def __init__(self, coordinator: HGSmartCoordinator, device_id: str) -> None:
+    def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
         self._attr_unique_id = f"{device_id}_last_event"
 

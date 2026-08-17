@@ -34,8 +34,22 @@
     "select": {
       "portions": { "name": "Porzioni" }
     },
+    "number": {
+      "refill_percent": { "name": "Percentuale rifornimento" },
+      "update_interval": { "name": "Intervallo di aggiornamento" },
+      "meal_portions": { "name": "Porzioni pasto {n}" }
+    },
     "button": {
-      "feed": { "name": "Erogazione manuale" }
+      "feed": { "name": "Erogazione manuale" },
+      "reset_desiccant": { "name": "Reset essiccante" },
+      "refill": { "name": "Rifornimento" }
+    },
+    "switch": {
+      "child_lock": { "name": "Blocco bambini" },
+      "meal_enabled": { "name": "Pasto {n} abilitato" }
+    },
+    "time": {
+      "meal_time": { "name": "Orario pasto {n}" }
     }
   }
 }
