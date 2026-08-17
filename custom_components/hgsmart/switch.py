@@ -11,6 +11,7 @@ import logging
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -40,6 +41,7 @@ async def async_setup_entry(
 class HGSmartChildLockSwitch(HGSmartDeviceEntity, SwitchEntity):
     _attr_translation_key = "child_lock"
     _attr_icon = "mdi:account-lock"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
@@ -57,10 +59,7 @@ class HGSmartChildLockSwitch(HGSmartDeviceEntity, SwitchEntity):
 
     async def _async_set_locked(self, locked: bool) -> None:
         try:
-            token = await self.coordinator.client.async_login()
-            await self.coordinator.client.async_set_child_lock(
-                token, self._device_id, locked
-            )
+            await self.coordinator.client.async_set_child_lock(self._device_id, locked)
         except HGSmartApiError as err:
             action = "enable" if locked else "disable"
             raise HomeAssistantError(f"Failed to {action} child lock: {err}") from err
@@ -73,6 +72,7 @@ class HGSmartMealEnabledSwitch(HGSmartDeviceEntity, SwitchEntity):
 
     _attr_translation_key = "meal_enabled"
     _attr_icon = "mdi:calendar-clock"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self, coordinator: HGSmartDeviceCoordinator, device_id: str, slot: int

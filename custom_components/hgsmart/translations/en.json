@@ -29,10 +29,14 @@
       "refill_date": { "name": "Last refill" },
       "desiccant_date": { "name": "Last desiccant change" },
       "firmware_version": { "name": "Firmware version" },
-      "last_event": { "name": "Last event" }
+      "last_event": { "name": "Last event" },
+      "eating_count_left": { "name": "Eating count (left bowl)" },
+      "eating_count_right": { "name": "Eating count (right bowl)" },
+      "eating_avg_duration_left": { "name": "Average eating duration (left bowl)" },
+      "eating_avg_duration_right": { "name": "Average eating duration (right bowl)" }
     },
     "select": {
-      "portions": { "name": "Portions" }
+      "manual_feed_portions": { "name": "Manual feed portions" }
     },
     "number": {
       "refill_percent": { "name": "Refill percentage" },

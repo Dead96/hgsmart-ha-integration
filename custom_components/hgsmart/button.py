@@ -42,8 +42,7 @@ class HGSmartFeedButton(HGSmartDeviceEntity, ButtonEntity):
     async def async_press(self) -> None:
         portions = self.coordinator.get_portions()
         try:
-            token = await self.coordinator.client.async_login()
-            await self.coordinator.client.async_send_feed(token, self._device_id, portions)
+            await self.coordinator.client.async_send_feed(self._device_id, portions)
         except HGSmartApiError as err:
             raise HomeAssistantError(f"Feeding failed: {err}") from err
 
@@ -64,8 +63,7 @@ class HGSmartResetDesiccantButton(HGSmartDeviceEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         try:
-            token = await self.coordinator.client.async_login()
-            await self.coordinator.client.async_reset_desiccant(token, self._device_id)
+            await self.coordinator.client.async_reset_desiccant(self._device_id)
         except HGSmartApiError as err:
             raise HomeAssistantError(f"Desiccant reset failed: {err}") from err
 
@@ -89,9 +87,8 @@ class HGSmartRefillButton(HGSmartDeviceEntity, ButtonEntity):
         )
         surplus = round(capacity * percent / 100)
         try:
-            token = await self.coordinator.client.async_login()
             await self.coordinator.client.async_refill_feeder(
-                token, self._device_id, capacity, surplus, capacity_model
+                self._device_id, capacity, surplus, capacity_model
             )
         except HGSmartApiError as err:
             raise HomeAssistantError(f"Refill failed: {err}") from err

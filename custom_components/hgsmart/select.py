@@ -24,7 +24,7 @@ async def async_setup_entry(
 
 
 class HGSmartPortionSelect(HGSmartDeviceEntity, SelectEntity, RestoreEntity):
-    _attr_translation_key = "portions"
+    _attr_translation_key = "manual_feed_portions"
     _attr_icon = "mdi:counter"
     _attr_options = PORTION_OPTIONS
 

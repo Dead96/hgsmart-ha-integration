@@ -64,12 +64,59 @@ Response:
 - `idToken` and `accessToken` are identical (the same JWT).
 - `accessToken`: expires after **2 hours** (7200s, from `exp - iat` in the payload).
 - `refreshToken`: expires after **30 days** (2,592,000s).
-- No refresh endpoint captured yet — not tested. Given the low expected call volume, the approach chosen for the integration is **login on every call** instead of caching/refreshing the token (see the "Notes for the integration" section).
+- Refresh endpoint confirmed — see section 1bis. The integration logs in once, reuses the access token for its lifetime, and refreshes it instead of logging in again on every call (see the "Notes for the integration" section).
+
+---
+
+## 1bis. Refresh token
+
+```
+POST /oauth/refreshToken
+Authorization: Bearer <current accessToken>
+Content-Type: application/json
+```
+
+Body:
+```json
+{
+  "refreshtoken": "<refreshToken>"
+}
+```
+
+Note the request body key is lowercase `refreshtoken`, unlike the `refreshToken` field name used everywhere in responses. The `Authorization` header still carries the *current* (soon-to-expire) access token — confirmed via a real capture, the app doesn't omit it just because it's refreshing.
+
+Response: identical shape to login, except `idToken` is empty:
+```json
+{
+  "code": 200,
+  "msg": "Successful operation",
+  "data": {
+    "idToken": "",
+    "accessToken": "<new jwt>",
+    "refreshToken": "<new jwt>"
+  }
+}
+```
+
+Both `accessToken` and `refreshToken` are replaced — always store the new `refreshToken` from the response, not just the new `accessToken`. Not yet confirmed: what happens if this is called with an already-expired `refreshToken` — the integration falls back to a full username/password login if this call fails for any reason, regardless of the specific error.
 
 All subsequent calls require:
 ```
 Authorization: Bearer <accessToken>
 ```
+
+### Session-expired error shape
+
+Confirmed via a real capture: an expired session does **not** come back as an HTTP 401. The transport-level response is a normal HTTP 200; the expiry is only signaled inside the JSON body, in the same `code`/`msg` shape used for every other API error:
+
+```json
+{
+  "code": 401,
+  "msg": "登录状态已过期"
+}
+```
+
+(`msg` is Chinese for "login status has expired".) This can happen on *any* authenticated call, not just the ones right after a token was supposed to expire — e.g. if the server invalidates a session early. The integration checks `code` (not the HTTP status) on every response, and when it sees `401` there, it forces a fresh token (refresh, or full login if the refresh also fails) and retries the original call exactly once.
 
 ---
 
@@ -200,7 +247,9 @@ After sending the feeding command, the app calls these three endpoints in sequen
   }
 }
 ```
-`remaining` = probably an estimated remaining food level/portion count; `desiccantExpire` = remaining days for the desiccant bag. Both `0` in the original capture (dispenser empty/disconnected during testing). `eating` = list of feeding entries for the day, each with a `type` (subtype/source of the feeding, e.g. manual vs. scheduled — not yet mapped), a `time` (feeding slot/occurrence number?) and a `duration` (motor run time in some unit — not yet decoded). Not currently used by the integration.
+`remaining` = estimated remaining food level, as a **percentage** (the integration exposes it as `sensor.remaining_food` with a `%` unit). `desiccantExpire` = remaining days for the desiccant bag. Both `0` in the original capture (dispenser empty/disconnected during testing).
+
+`eating` = today's per-bowl eating summary — this dispenser has two bowls, and each entry is one bowl's stats for today. All three fields are confirmed against the app's own "Today's Eating" screen for each bowl (labeled "L"/"R"): `type` is the bowl (`"1"` = left, `"2"` = right — also matches the left/right bowl wording in `device/today`'s `eventDesc` below), `time` is the app's "Today's Eating: N time(s)" (how many eating sessions happened today on that bowl), and `duration` is the app's "Avg Duration" for that bowl today, in seconds. Exposed by the integration as `sensor.eating_count_left`/`_right` and `sensor.eating_avg_duration_left`/`_right`.
 
 ### `GET /app/device/info/{deviceId}`
 Same as `device/list` but for a single device, with an extra `accessories` field (links to buy spare parts):
@@ -233,16 +282,26 @@ Same as `device/list` but for a single device, with an extra `accessories` field
 {
   "code": 200,
   "data": [
-    {
-      "createTime": "2026-08-17 16:43:03",
-      "eventDesc": "Manual feeding of 1 portion(s).",
-      "event": "1_2"
-    }
+    { "createTime": "2026-08-17 20:26:25", "eventDesc": "Your pet has eaten from the right bowl for 1m 46s.", "event": "1_10" },
+    { "createTime": "2026-08-17 20:25:41", "eventDesc": "Your pet has eaten from the left bowl for 0m 57s.", "event": "1_9" },
+    { "createTime": "2026-08-17 20:24:34", "eventDesc": "Manual feeding of 2 portion(s).", "event": "1_2" },
+    { "createTime": "2026-08-17 18:29:39", "eventDesc": "Manual feeding of 1 portion(s).", "event": "1_2" },
+    { "createTime": "2026-08-17 16:47:59", "eventDesc": "Your pet has eaten from the left bowl for 1m 52s.", "event": "1_9" },
+    { "createTime": "2026-08-17 16:46:01", "eventDesc": "Your pet has eaten from the right bowl for 3m 36s.", "event": "1_10" },
+    { "createTime": "2026-08-17 16:43:03", "eventDesc": "Manual feeding of 1 portion(s).", "event": "1_2" }
   ],
-  "total": 1
+  "total": 7
 }
 ```
-Daily event log for the device. `eventDesc` is human-readable text that unambiguously confirms what actually happened (here: manual feeding of 1 portion, executed successfully). `event: "1_2"` is probably a type/subtype code for the event (not yet mapped for other values — e.g. errors, refills, etc.).
+Daily event log for the device (only *today's* events — the list resets at local midnight). `eventDesc` is human-readable text that unambiguously confirms what actually happened. `event` is a type/subtype code; confirmed so far:
+
+| `event` | Meaning |
+|---|---|
+| `1_2` | Manual feeding |
+| `1_9` | Pet ate from the left bowl |
+| `1_10` | Pet ate from the right bowl |
+
+Not yet seen/mapped: codes for errors, refills, desiccant resets, or scheduled (as opposed to manual) feedings — this endpoint only ever shows what has *actually happened today*, so codes for things that haven't occurred yet in the current capture stay unmapped. The integration exposes this mapping via `sensor.last_event`'s `event_type` attribute (falls back to the raw `event` code if unmapped).
 
 **Implication for the HA integration**: to know whether the feeding *actually* succeeded (not just accepted by the backend), the correct flow is: `PUT` command → wait a few seconds → `GET /app/device/today/{deviceId}` → check whether a new event appeared with a recent `createTime` and an `eventDesc` mentioning "feeding". An HA sensor based on this endpoint (periodic polling, e.g. every 5-10 minutes, or right after each command) would give a real confirmation instead of trusting the outcome of the `PUT` alone.
 
@@ -299,7 +358,7 @@ Unlike every other device call, `deviceId` is **not** in the URL — it's a fiel
 ```
 
 - `capacity`: confirmed fixed at `320` for both known `capacityModel` values — `"S305D"` (5 L version) and `"S303D"` (3.5 L version). It appears to be a fixed protocol value rather than the device's actual hopper size in liters/grams.
-- `surplus`: how much food is in the hopper after the refill, as an absolute amount out of `capacity`. In the captured example the user reported entering roughly `53%` full in the app, which produced `surplus: 173` — that's `~54%` of `320`, not exactly `53%`, so the precise rounding/percentage formula used by the app is **not confirmed** (the integration currently does `round(capacity * percent / 100)`, which lands close but may not exactly match the app's own math).
+- `surplus`: how much food is in the hopper after the refill, as an absolute amount out of `capacity`. Confirmed: `round(capacity * percent / 100)` (as implemented in the integration) matches the app's own behavior.
 
 Response:
 ```json
@@ -421,10 +480,7 @@ Verified against **all six** slots in the capture above, this layout reconstruct
 | `plan4` | `11100014` | 1 | 11 | 00 | 01 | 4 |
 | `plan5` | `02100015` | 0 | 21 | 00 | 01 | 5 |
 
-`HH`/`MM` are UTC, not local — confirmed: the app displays/edits these times in local time (see the "Feeding Plan" screenshot), converting to/from UTC for the API. The integration converts using Home Assistant's configured timezone (`homeassistant.util.dt`).
-
-**Not yet confirmed**:
-- Whether `MM` is ever non-`"00"` — every slot in this capture happens to be on the hour, so the minute digits' format/behavior for non-zero values hasn't actually been exercised.
+`HH`/`MM` are UTC, not local — confirmed: the app displays/edits these times in local time (see the "Feeding Plan" screenshot), converting to/from UTC for the API. The integration converts using Home Assistant's configured timezone (`homeassistant.util.dt`). Non-`"00"` minute values are also confirmed working, tested against the real backend.
 
 ### Writing a schedule slot
 
@@ -455,7 +511,7 @@ Response: same `{"code": 200, "msg": "Successful operation", "data": null}` shap
 
 ## Notes for the Home Assistant integration
 
-**Recommended approach**: given the low call volume (a few feedings/day), avoid managing token caching/refresh — do login + command in sequence on every trigger. For a real confirmation, add a call to `device/today` a few seconds after the command (see section 4bis) instead of trusting the `PUT` outcome alone.
+**Recommended approach**: log in once, cache the access token, and refresh it via `/oauth/refreshToken` (section 1bis) shortly before its ~2h expiry instead of logging in again on every call — this is what the app itself does, and what the integration implements. Fall back to a full username/password login only if the refresh call itself fails (expired refresh token, first run, etc.). For a real confirmation of a feed, add a call to `device/today` a few seconds after the command (see section 4bis) instead of trusting the `PUT` outcome alone.
 
 Implementation options, from simplest to most involved:
 
@@ -465,11 +521,5 @@ Implementation options, from simplest to most involved:
 
 **Security**: `client_secret` and the password should go in `secrets.yaml`, never in plain text in the main configuration. The `client_id`/`client_secret` above are fixed values hardcoded in the app itself (not generated for your account), so they're not "secrets" in the classic sense — but the password is.
 
-**What's still missing before generalizing beyond the "feed now" case**:
-- Direct confirmation that the last two digits of `userfoodframe`'s `value` are really the portion count for an *immediate* feed (as opposed to the `plan` frame, where this was confirmed) — the layout is otherwise understood: `"01"` (fixed) + UTC hour + UTC minute + portions, which is why `value` changes on every call even for the same action (the time component changes)
-- Token refresh endpoint (if you want to avoid repeated logins in the future)
-- Any error codes other than 200/500 (e.g. expired token → probably 401, to be verified)
-- Mapping of other `event` values in `device/today` (only `"1_2"` = successful manual feeding seen so far) — useful if in the future you want an HA sensor that distinguishes different event types (e.g. error, refill)
-- Exact `surplus`/percentage formula for the refill call (section 7) — the `~53%` → `173` data point doesn't cleanly match a simple `capacity * percent / 100`, so a couple more captures at known percentages would help pin it down
-- Meaning of `type`/`time`/`duration` in the `eating` array returned by `feeder/summary` (section 4bis)
-- Whether `MM` in `plan0`-`plan5` (section 9) is ever non-`"00"` — every slot captured so far happens to be on the hour
+**What's still missing**:
+- Mapping of further `event` values in `device/today` beyond the three confirmed (`1_2`, `1_9`, `1_10`) — e.g. errors, refills, desiccant resets, scheduled (vs. manual) feedings

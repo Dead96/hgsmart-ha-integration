@@ -50,7 +50,7 @@ class HGSmartRefillPercentNumber(HGSmartDeviceEntity, NumberEntity, RestoreEntit
     _attr_native_max_value = MAX_REFILL_PERCENT
     _attr_native_step = 1
     _attr_native_unit_of_measurement = "%"
-    _attr_mode = NumberMode.SLIDER
+    _attr_mode = NumberMode.BOX
 
     def __init__(self, coordinator: HGSmartDeviceCoordinator, device_id: str) -> None:
         super().__init__(coordinator, device_id)
@@ -129,6 +129,7 @@ class HGSmartMealPortionsNumber(HGSmartDeviceEntity, NumberEntity):
     _attr_native_max_value = MAX_PORTIONS
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self, coordinator: HGSmartDeviceCoordinator, device_id: str, slot: int

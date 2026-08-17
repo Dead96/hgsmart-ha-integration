@@ -29,10 +29,14 @@
       "refill_date": { "name": "Ultimo rifornimento" },
       "desiccant_date": { "name": "Ultima sostituzione essiccante" },
       "firmware_version": { "name": "Versione firmware" },
-      "last_event": { "name": "Ultimo evento" }
+      "last_event": { "name": "Ultimo evento" },
+      "eating_count_left": { "name": "Pasti oggi (ciotola sinistra)" },
+      "eating_count_right": { "name": "Pasti oggi (ciotola destra)" },
+      "eating_avg_duration_left": { "name": "Durata media pasto (ciotola sinistra)" },
+      "eating_avg_duration_right": { "name": "Durata media pasto (ciotola destra)" }
     },
     "select": {
-      "portions": { "name": "Porzioni" }
+      "manual_feed_portions": { "name": "Porzioni erogazione manuale" }
     },
     "number": {
       "refill_percent": { "name": "Percentuale rifornimento" },

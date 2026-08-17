@@ -40,8 +40,7 @@ class HGSmartDiscoveryCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
 
     async def _async_update_data(self) -> list[dict[str, Any]]:
         try:
-            token = await self.client.async_login()
-            return await self.client.async_get_devices(token)
+            return await self.client.async_get_devices()
         except HGSmartApiError as err:
             raise UpdateFailed(str(err)) from err
 
@@ -69,23 +68,22 @@ class HGSmartDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            token = await self.client.async_login()
-            info = await self.client.async_get_device_info(token, self.device_id)
+            info = await self.client.async_get_device_info(self.device_id)
         except HGSmartApiError as err:
             raise UpdateFailed(str(err)) from err
 
         try:
-            summary = await self.client.async_get_feeder_summary(token, self.device_id)
+            summary = await self.client.async_get_feeder_summary(self.device_id)
         except HGSmartApiError as err:
             _LOGGER.debug("Feeder summary failed for %s: %s", self.device_id, err)
             summary = {}
         try:
-            today = await self.client.async_get_today_events(token, self.device_id)
+            today = await self.client.async_get_today_events(self.device_id)
         except HGSmartApiError as err:
             _LOGGER.debug("Today events failed for %s: %s", self.device_id, err)
             today = []
         try:
-            attributes = await self.client.async_get_attributes(token, self.device_id)
+            attributes = await self.client.async_get_attributes(self.device_id)
         except HGSmartApiError as err:
             _LOGGER.debug("Attributes fetch failed for %s: %s", self.device_id, err)
             attributes = {}
@@ -119,8 +117,7 @@ class HGSmartDeviceCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_set_meal_slot(
         self, slot: int, *, enabled: bool, hour: int, minute: int, portions: int
     ) -> None:
-        token = await self.client.async_login()
         await self.client.async_set_plan_slot(
-            token, self.device_id, slot, enabled, hour, minute, portions
+            self.device_id, slot, enabled, hour, minute, portions
         )
         await self.async_request_refresh()

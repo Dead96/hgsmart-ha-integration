@@ -13,6 +13,11 @@ CLIENT_SECRET = "ss9Ytzb4gSceaPhwhKteAPLiVP4pmU8zxLEcWuscM6Vsnj7wMt"
 
 DEFAULT_ZONEID = "Europe/Rome"
 
+# accessToken lifetime per docs (exp - iat = 7200s). Refresh a bit early to
+# avoid a request racing the exact expiry instant.
+ACCESS_TOKEN_LIFETIME = timedelta(seconds=7200)
+TOKEN_REFRESH_MARGIN = timedelta(seconds=120)
+
 # Fixed cadence for the *discovery* poll only (device list → find new
 # devices). Each device's own status polling interval is independent and
 # configurable — see MIN/MAX/DEFAULT_UPDATE_INTERVAL_MINUTES below.
@@ -44,6 +49,23 @@ DEFAULT_CAPACITY_MODEL = "S305D"
 
 # Number of scheduled-meal slots the device exposes (`plan0`..`plan5`).
 SCHEDULE_SLOTS = 6
+
+# `event` codes seen in GET /app/device/today/{deviceId} (see
+# docs/hgsmart_api.md). NOT exhaustive — that endpoint only returns
+# *today's* events, so codes for things that haven't happened yet today
+# (errors, refills, desiccant resets, ...) are still unmapped.
+EVENT_TYPE_MAP = {
+    "1_2": "manual_feeding",
+    "1_9": "eating_left_bowl",
+    "1_10": "eating_right_bowl",
+}
+
+# `eating[].type` in feeder/summary — confirmed against the app's own
+# per-bowl "Today's Eating" screen (count + average duration).
+BOWL_TYPES = {
+    "left": "1",
+    "right": "2",
+}
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,

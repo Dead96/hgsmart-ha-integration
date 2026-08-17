@@ -1,22 +1,32 @@
 """Minimal async client for the reverse-engineered HG Smart cloud API.
 
-The backend has no confirmed token-refresh endpoint, and call volume for this
-integration is low (a handful of feedings a day plus periodic polling), so we
-log in again for every batch of calls instead of caching/refreshing tokens.
+Mirrors the app's own session handling: log in once, reuse the access
+token for its ~2h lifetime, and refresh it via `/oauth/refreshToken`
+instead of logging in again — falling back to a full login only if the
+refresh token itself has also expired (e.g. after 30 days of inactivity).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
+from datetime import datetime
 from typing import Any
 
 import aiohttp
 
 from homeassistant.util import dt as dt_util
 
-from .const import BASE_URL, CLIENT_ID, CLIENT_SECRET, DEFAULT_ZONEID
+from .const import (
+    ACCESS_TOKEN_LIFETIME,
+    BASE_URL,
+    CLIENT_ID,
+    CLIENT_SECRET,
+    DEFAULT_ZONEID,
+    TOKEN_REFRESH_MARGIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +45,15 @@ class HGSmartAuthError(HGSmartApiError):
     """Login failed (bad credentials, or token missing from the response)."""
 
 
+class HGSmartTokenExpiredError(HGSmartApiError):
+    """Session expired mid-call.
+
+    Confirmed via a real capture: this never arrives as an HTTP 401 — the
+    transport-level response is a normal HTTP 200 with `{"code": 401, "msg":
+    "..."}` in the JSON body, same as every other API error shape.
+    """
+
+
 class HGSmartApiClient:
     """Talks to https://hgsmart.net/hsapi."""
 
@@ -49,6 +68,10 @@ class HGSmartApiClient:
         self._username = username
         self._password = password
         self._zoneid = zoneid or DEFAULT_ZONEID
+        self._access_token: str | None = None
+        self._refresh_token: str | None = None
+        self._token_expires_at: datetime | None = None
+        self._token_lock = asyncio.Lock()
 
     def _headers(self, token: str | None = None) -> dict[str, str]:
         headers = {
@@ -86,11 +109,13 @@ class HGSmartApiClient:
 
         if not isinstance(payload, dict) or payload.get("code") != 200:
             msg = payload.get("msg") if isinstance(payload, dict) else None
+            if isinstance(payload, dict) and payload.get("code") == 401:
+                raise HGSmartTokenExpiredError(msg or "Session expired")
             raise HGSmartApiError(msg or f"API error on {path}: {payload}")
         return payload.get("data")
 
-    async def async_login(self) -> str:
-        """Log in and return a fresh access token."""
+    async def _async_raw_login(self) -> dict[str, Any]:
+        """POST /oauth/login and return the raw `data` payload (accessToken/refreshToken)."""
         body = {
             "account_num": self._username,
             "pwd": self._password,
@@ -105,32 +130,121 @@ class HGSmartApiClient:
         except HGSmartApiError as err:
             raise HGSmartAuthError(str(err)) from err
 
-        token = data.get("accessToken") if isinstance(data, dict) else None
-        if not token:
+        if not isinstance(data, dict) or not data.get("accessToken"):
             raise HGSmartAuthError("Login succeeded but no token in the response")
-        return token
+        return data
 
-    async def async_get_devices(self, token: str) -> list[dict[str, Any]]:
-        data = await self._request("GET", "/app/device/list", token=token)
+    async def async_login(self) -> str:
+        """Log in with username/password and return a fresh access token.
+
+        Used only for one-off credential validation (the config flow) —
+        does not touch the token cache used by `async_get_token`.
+        """
+        data = await self._async_raw_login()
+        return data["accessToken"]
+
+    def _cache_tokens(self, data: dict[str, Any]) -> None:
+        self._access_token = data["accessToken"]
+        self._refresh_token = data.get("refreshToken") or self._refresh_token
+        self._token_expires_at = dt_util.utcnow() + ACCESS_TOKEN_LIFETIME - TOKEN_REFRESH_MARGIN
+
+    async def _async_refresh_token(self) -> None:
+        """POST /oauth/refreshToken to exchange the refresh token for a new pair.
+
+        Confirmed via a real capture: the request still carries the *old*
+        access token as the `Authorization: Bearer` header (even though
+        it's the one expiring) alongside `{"refreshtoken": "..."}` (lowercase
+        key, unlike the response's `refreshToken`) in the JSON body.
+        """
+        body = {"refreshtoken": self._refresh_token}
+        try:
+            data = await self._request(
+                "POST", "/oauth/refreshToken", token=self._access_token, json=body
+            )
+        except HGSmartConnectionError:
+            raise
+        except HGSmartApiError as err:
+            raise HGSmartAuthError(str(err)) from err
+
+        if not isinstance(data, dict) or not data.get("accessToken"):
+            raise HGSmartAuthError("Refresh succeeded but no access token in the response")
+        self._cache_tokens(data)
+
+    async def async_get_token(self) -> str:
+        """Return a valid access token, reusing/refreshing it like the app does.
+
+        Reuses the cached token until shortly before its ~2h expiry, then
+        refreshes via `/oauth/refreshToken`; falls back to a full
+        username/password login only if that refresh itself fails (e.g.
+        the 30-day refresh token has also expired, or this is the very
+        first call).
+        """
+        async with self._token_lock:
+            now = dt_util.utcnow()
+            if (
+                self._access_token
+                and self._token_expires_at is not None
+                and now < self._token_expires_at
+            ):
+                return self._access_token
+
+            if self._access_token and self._refresh_token:
+                try:
+                    await self._async_refresh_token()
+                    return self._access_token
+                except HGSmartApiError as err:
+                    _LOGGER.debug(
+                        "Token refresh failed (%s), falling back to full login", err
+                    )
+
+            data = await self._async_raw_login()
+            self._cache_tokens(data)
+            return self._access_token
+
+    def _invalidate_token(self) -> None:
+        """Force the next call to get a fresh token instead of trusting the cache."""
+        self._token_expires_at = None
+
+    async def _authed_request(
+        self, method: str, path: str, *, retry: bool = True, **kwargs: Any
+    ) -> Any:
+        """Like `_request`, but attaches a cached/refreshed token automatically.
+
+        If the backend reports the session as expired mid-call
+        (`HGSmartTokenExpiredError`), forces a fresh token and retries
+        exactly once — the original call never reached the point of acting
+        on the request in that case, so retrying is safe (e.g. it won't
+        double-feed).
+        """
+        token = await self.async_get_token()
+        try:
+            return await self._request(method, path, token=token, **kwargs)
+        except HGSmartTokenExpiredError:
+            if not retry:
+                raise
+            _LOGGER.debug("Session expired mid-call to %s, forcing a fresh token", path)
+            self._invalidate_token()
+            return await self._authed_request(method, path, retry=False, **kwargs)
+
+    async def async_get_devices(self) -> list[dict[str, Any]]:
+        data = await self._authed_request("GET", "/app/device/list")
         return data or []
 
-    async def async_get_device_info(self, token: str, device_id: str) -> dict[str, Any]:
-        data = await self._request("GET", f"/app/device/info/{device_id}", token=token)
+    async def async_get_device_info(self, device_id: str) -> dict[str, Any]:
+        data = await self._authed_request("GET", f"/app/device/info/{device_id}")
         return data or {}
 
-    async def async_get_feeder_summary(self, token: str, device_id: str) -> dict[str, Any]:
-        data = await self._request(
-            "GET", f"/app/device/feeder/summary/{device_id}", token=token
-        )
+    async def async_get_feeder_summary(self, device_id: str) -> dict[str, Any]:
+        data = await self._authed_request("GET", f"/app/device/feeder/summary/{device_id}")
         return data or {}
 
-    async def async_get_today_events(self, token: str, device_id: str) -> list[dict[str, Any]]:
-        data = await self._request("GET", f"/app/device/today/{device_id}", token=token)
+    async def async_get_today_events(self, device_id: str) -> list[dict[str, Any]]:
+        data = await self._authed_request("GET", f"/app/device/today/{device_id}")
         return data or []
 
-    async def async_get_attributes(self, token: str, device_id: str) -> dict[str, Any]:
+    async def async_get_attributes(self, device_id: str) -> dict[str, Any]:
         """Full attribute snapshot: `child` (lock state), `plan0`-`plan5`, etc."""
-        data = await self._request("GET", f"/app/device/attribute/{device_id}", token=token)
+        data = await self._authed_request("GET", f"/app/device/attribute/{device_id}")
         return data or {}
 
     @staticmethod
@@ -153,17 +267,9 @@ class HGSmartApiClient:
     def build_userfoodframe_value(portions: int) -> str:
         """Build the `ctrl.value` string for a manual feeding command.
 
-        REVERSE-ENGINEERED, PARTIALLY CONFIRMED: observed values like
-        "01162801" looked like "01" (fixed) + hour + minute + portion count.
-        The hour/minute are sent as UTC — confirmed against a real capture
-        of a *scheduled* meal (see `build_plan_value`), and assumed
-        consistent here since both frames are generated by the same app
-        logic. The last two digits being the portion count is similarly
-        unconfirmed *for this specific frame* — the app was only ever seen
-        dispensing the default 1 portion here — though confidence is higher
-        now that the analogous field in the scheduled-meal frame (`plan`,
-        same digit width, same position relative to the time fields) was
-        confirmed to track portions correctly.
+        Layout: "01" (fixed) + hour (UTC) + minute (UTC) + portion count.
+        Confirmed against real captures/tests, including portions other
+        than the default 1.
         """
         now = dt_util.now()
         utc_hour, utc_minute = HGSmartApiClient._local_to_utc_hour_minute(now.hour, now.minute)
@@ -177,11 +283,8 @@ class HGSmartApiClient:
 
         Layout: enabled(1) + hour(2, UTC) + minute(2, UTC) + portions(2) +
         slot index(1) — reverse-engineered from a capture of all 6 `planN`
-        values at once (see docs/hgsmart_api.md §9), which reconstructed
-        exactly for every slot. Both the UTC hour and the portions field
-        are confirmed (changing a scheduled meal's portion count in the app
-        changed this exact digit pair); only the minute field's behavior
-        for non-`:00` values remains untested.
+        values at once (see docs/hgsmart_api.md §9). Confirmed against real
+        tests, including non-default portions and non-`:00` minutes.
         """
         utc_hour, utc_minute = HGSmartApiClient._local_to_utc_hour_minute(
             local_hour, local_minute
@@ -208,7 +311,7 @@ class HGSmartApiClient:
         }
 
     async def _async_send_attribute(
-        self, token: str, device_id: str, identifier: str, value: str
+        self, device_id: str, identifier: str, value: str
     ) -> None:
         """POST a `{identifier, value}` control frame to /app/device/attribute.
 
@@ -225,20 +328,17 @@ class HGSmartApiClient:
         form = aiohttp.FormData()
         form.add_field("command", json.dumps(command))
         _LOGGER.debug("Sending attribute command to %s: %s", device_id, command)
-        await self._request(
-            "PUT", f"/app/device/attribute/{device_id}", token=token, data=form
-        )
+        await self._authed_request("PUT", f"/app/device/attribute/{device_id}", data=form)
 
-    async def async_send_feed(self, token: str, device_id: str, portions: int) -> None:
+    async def async_send_feed(self, device_id: str, portions: int) -> None:
         value = self.build_userfoodframe_value(portions)
-        await self._async_send_attribute(token, device_id, "userfoodframe", value)
+        await self._async_send_attribute(device_id, "userfoodframe", value)
 
-    async def async_set_child_lock(self, token: str, device_id: str, locked: bool) -> None:
-        await self._async_send_attribute(token, device_id, "child", "1" if locked else "0")
+    async def async_set_child_lock(self, device_id: str, locked: bool) -> None:
+        await self._async_send_attribute(device_id, "child", "1" if locked else "0")
 
     async def async_set_plan_slot(
         self,
-        token: str,
         device_id: str,
         slot: int,
         enabled: bool,
@@ -249,16 +349,14 @@ class HGSmartApiClient:
         """Write a full scheduled-meal slot (partial updates are not supported —
         the whole 8-char value must be resent, see docs/hgsmart_api.md §9)."""
         value = self.build_plan_value(slot, enabled, local_hour, local_minute, portions)
-        await self._async_send_attribute(token, device_id, "plan", value)
+        await self._async_send_attribute(device_id, "plan", value)
 
-    async def async_reset_desiccant(self, token: str, device_id: str) -> None:
+    async def async_reset_desiccant(self, device_id: str) -> None:
         """Mark the desiccant bag as freshly replaced (no request body)."""
-        await self._request(
-            "PUT", f"/app/device/feeder/desiccant/{device_id}", token=token
-        )
+        await self._authed_request("PUT", f"/app/device/feeder/desiccant/{device_id}")
 
     async def async_refill_feeder(
-        self, token: str, device_id: str, capacity: int, surplus: int, capacity_model: str
+        self, device_id: str, capacity: int, surplus: int, capacity_model: str
     ) -> None:
         """Tell the backend the hopper was refilled to `surplus`/`capacity`."""
         body = {
@@ -267,6 +365,4 @@ class HGSmartApiClient:
             "surplus": surplus,
             "capacityModel": capacity_model,
         }
-        await self._request(
-            "PUT", "/app/device/feeder/refill", token=token, json=body
-        )
+        await self._authed_request("PUT", "/app/device/feeder/refill", json=body)

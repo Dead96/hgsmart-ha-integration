@@ -9,9 +9,8 @@ based on the reverse-engineered cloud API documented in
 Unofficial project, not affiliated with or supported by HG Smart/Honeyguardian.
 The API was reverse-engineered by capturing the official app's traffic
 (HTTP Toolkit), not from public documentation: it can change or break
-without notice, and some details (in particular the portion encoding, see
-below) are unconfirmed hypotheses. No guarantees: use it knowing it
-controls a pet food dispenser.
+without notice. No guarantees: use it knowing it controls a pet food
+dispenser.
 
 **Tested devices**: so far this integration has only been tested against a
 **Honey Guardian S305D**. Other HG Smart/Honeyguardian devices exposed by
@@ -34,114 +33,81 @@ does or doesn't work.
   — one device can be polled every minute and another every hour, adjusted
   live from its `number.update_interval` entity (see below), no restart
   needed.
-- **Entities for each dispenser**:
-  - `binary_sensor` Online
-  - `sensor` Remaining food, Desiccant expiry, Last refill, Last desiccant
-    change, Firmware version, Last event (text of the day's latest event,
-    e.g. "Manual feeding of 1 portion(s).")
-  - `select` Portions (1–6)
-  - `number` Refill percentage (1–100)
-  - `number` Update interval (1–1440 minutes, default 5) — how often *this
-    device's* own status (the sensors above) is polled. Changing it takes
-    effect immediately, no restart required. This is separate from, and
-    doesn't affect, the fixed 5-minute discovery poll that looks for brand
-    new devices on the account.
-  - `button` Manual feed — dispenses the number of portions set in the
-    `select`, then re-polls status a few seconds later so the "Last event"
-    sensor reflects the real outcome (a `200 OK` from the command call
-    alone is not a confirmation, see
-    [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §4).
-  - `button` Reset desiccant — tells the backend the desiccant bag was
-    just replaced.
-  - `button` Refill — tells the backend the hopper was refilled to the
-    percentage set in the `number` entity above.
-  - `switch` Child lock — enables/disables the dispenser's child lock. Its
-    state is read back from the device on every poll (`GET
-    .../attribute/{deviceId}`'s `child` field, see
-    [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §8), not just assumed —
-    if it's toggled from the HG Smart app or a button on the dispenser
-    itself, this switch will pick that up on the next poll.
-  - Up to 6 **scheduled meals**, one set of entities each (`Meal 1`…`Meal
-    6`, matching the app's "Feeding Plan" screen):
-    - `switch` Meal N enabled
-    - `time` Meal N time (local time — converted to/from the UTC the API
-      itself stores, see [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §9)
-    - `number` Meal N portions (1–6)
+- **Entities for each dispenser**, organized to match Home Assistant's
+  device-page sections (`entity_category`) — note HA sorts entities
+  *alphabetically by name within each section*, not in any custom order:
+  - **Sensors**: Online (`binary_sensor`), Remaining food (`%`), Desiccant
+    expiry, Last event (text of the day's latest event, e.g. "Manual
+    feeding of 1 portion(s)."; also carries an `event_type` attribute —
+    `manual_feeding`/`eating_left_bowl`/`eating_right_bowl`/etc., mapped
+    from the raw `event` code, see
+    [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §4bis — falls back to the
+    raw code for anything not yet mapped), and per-bowl (left/right) Eating
+    count and Average eating duration for today (matches the app's own
+    "Today's Eating"/"Avg Duration" screen — see
+    [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §4bis)
+  - **Diagnostic**: Last refill, Last desiccant change, Firmware version
+  - **Controls**: `button` Manual feed (dispenses the portions set in
+    `select` Manual feed portions, then re-polls so "Last event" reflects
+    the real outcome — a `200 OK` alone isn't a confirmation, see
+    [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §4), `select` Manual feed
+    portions (1–6), `button` Reset desiccant, `number` Refill percentage
+    (1–100, a precise text/box input, not a slider), `button` Refill (uses
+    the percentage above)
+  - **Configuration**: `switch` Child lock (state read back from the
+    device on every poll — `GET .../attribute/{deviceId}`'s `child` field,
+    see [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §8 — not just assumed:
+    if toggled from the HG Smart app or a button on the dispenser itself,
+    this switch picks that up on the next poll); `number` Update interval
+    (1–1440 minutes, default 5) — how often *this device's* own status is
+    polled, effective immediately with no restart required, separate from
+    and not affecting the fixed 5-minute discovery poll that looks for
+    brand new devices on the account; and up to 6 **scheduled meals**
+    (`Meal 1`…`Meal 6`, matching the app's "Feeding Plan" screen):
+    `switch` Meal N enabled, `time` Meal N time (local time, converted
+    to/from the UTC the API itself stores — see
+    [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §9), `number` Meal N
+    portions (1–6). Changing any one of these three immediately sends the
+    *entire* slot to the backend (no partial-update support), then
+    re-polls to confirm — all three read the device's real, polled
+    schedule state.
 
-    Changing any one of these three immediately sends the *entire* slot
-    (all three fields) to the backend, since the API has no partial-update
-    for a schedule slot — then re-polls to confirm. All three read their
-    displayed value from the device's real, polled schedule state (not a
-    locally-cached guess).
+  Home Assistant doesn't support a custom section beyond
+  Sensors/Controls/Configuration/Diagnostic, so the 6 scheduled meals live
+  under Configuration alongside Child lock and Update interval rather than
+  in a dedicated area.
 
-There's no token caching/refresh: every polling cycle and every button
-press do a fresh login, as recommended in the docs given the low call
-volume.
+**Session handling mirrors the app**: log in once, reuse the access token
+for its ~2h lifetime, and refresh it via `/oauth/refreshToken` shortly
+before it expires — instead of logging in again on every poll/button
+press. A full username/password login only happens on the very first call
+and as a fallback if the refresh itself fails (see
+[`docs/hgsmart_api.md`](docs/hgsmart_api.md) §1bis). If the backend reports
+the session as expired mid-call — which arrives as a normal `200 OK` with
+`{"code": 401, ...}` in the body, not an HTTP 401 — the integration forces
+a fresh token and retries that one call automatically, once.
 
 ## Installation
+
+### Option A: HACS (custom repository)
+
+1. HACS → ⋮ (top-right menu) → **Custom repositories**.
+2. Add `https://github.com/Dead96/hgsmart-ha-integration` as an
+   **Integration**.
+3. Find **"HGSmart (Unofficial)"** in HACS and install it.
+4. Restart Home Assistant.
+
+### Option B: Manual copy
 
 1. Copy the `custom_components/hgsmart` folder into the
    `config/custom_components/` folder of your Home Assistant instance
    (create it if it doesn't exist).
 2. Restart Home Assistant.
-3. *Settings → Devices & services → Add integration* → search for
-   "HG Smart" → enter your email and password.
 
-## ⚠️ Point to verify: portion quantity
+### Adding the integration
 
-The `ctrl.value` encoding used for feeding (`api.py`, function
-`build_userfoodframe_value`) is a **partially confirmed hypothesis**:
-
-```
-"01" (fixed) + hour (HH, UTC) + minute (MM, UTC) + portions (2 digits, 01-06)
-```
-
-The hour/minute are sent as **UTC**, not local time — confirmed via a
-capture of the scheduled-meal feature (section 9 below), where the app's
-displayed local time didn't match the raw value directly, consistent with
-a UTC offset.
-
-In the original capture of an *immediate* feed, the app always dispensed
-the default 1 portion, so the last two digits were never directly observed
-to change for this specific call. Confidence is higher now that the
-identical digit pair in the scheduled-meal frame (`plan`, see below) was
-confirmed to track portions correctly, but that's a different API call —
-this one is still technically unconfirmed for anything other than 1.
-
-**Before trusting portions 2-6 on the manual feed button**, it's worth
-doing:
-
-1. Try dispensing 1 portion from the HA `button` and check in the
-   "Last event" sensor (or in the app) that exactly 1 portion arrived.
-2. Try 2-3 different portion counts and compare the `eventDesc` returned
-   by `GET /app/device/today/{deviceId}` (e.g. "Manual feeding of 3
-   portion(s).") against what you selected in the `select`.
-3. If it doesn't match, only the `build_userfoodframe_value` function in
-   `custom_components/hgsmart/api.py` needs updating — the rest of the
-   integration stays the same.
-
-## ⚠️ Point to verify: refill percentage
-
-The Refill `button` sends a fixed `capacity` value based on the device's
-`capacityModel` (`const.py`, `FOOD_CAPACITY_BY_MODEL`) — confirmed at `320`
-for both known models (S305D 5 L and S303D 3.5 L) — and computes `surplus`
-from the percentage set in the `number` entity as
-`round(capacity * percent / 100)`. The exact percentage→`surplus` rounding
-the app itself uses hasn't been fully pinned down (see
-[`docs/hgsmart_api.md`](docs/hgsmart_api.md) §7 for the data point behind
-this: `~53%` in the app produced `surplus: 173`, i.e. `~54%` of `320`). If
-you compare the app's own refill capture at a known percentage, please open
-an issue so the formula can be corrected.
-
-## ⚠️ Point to verify: scheduled-meal minutes
-
-The `plan0`-`plan5` layout (`api.py`, `build_plan_value`/`parse_plan_value`)
-is confirmed, including the portions field and the UTC hour — changing a
-scheduled meal's portion count in the app was tested and correctly changed
-this digit pair (see [`docs/hgsmart_api.md`](docs/hgsmart_api.md) §9). The
-one thing still untested: every slot in the capture happened to be on the
-hour (`:00` minutes), so non-zero minutes in `time.meal_N_time` haven't
-actually been exercised against the real backend yet.
+*Settings → Devices & services → Add integration* → search for
+**"HGSmart"** → enter your email and password.
 
 ## Debug
 

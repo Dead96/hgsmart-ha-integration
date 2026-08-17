@@ -1,6 +1,6 @@
 {
   "domain": "hgsmart",
-  "name": "HGSmart Home Assistant Integration",
+  "name": "HGSmart (Unofficial)",
   "codeowners": ["@Dead96"],
   "config_flow": true,
   "documentation": "https://github.com/Dead96/hgsmart-ha-integration",

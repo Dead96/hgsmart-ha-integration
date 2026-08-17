@@ -10,6 +10,7 @@ from datetime import time as dt_time
 
 from homeassistant.components.time import TimeEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -37,6 +38,7 @@ class HGSmartMealTimeEntity(HGSmartDeviceEntity, TimeEntity):
 
     _attr_translation_key = "meal_time"
     _attr_icon = "mdi:clock-outline"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self, coordinator: HGSmartDeviceCoordinator, device_id: str, slot: int
