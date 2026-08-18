@@ -121,3 +121,7 @@ logger:
 
 (the password is never logged; debug logs only show the feeding command's
 body).
+
+## License
+
+[MIT](LICENSE)
